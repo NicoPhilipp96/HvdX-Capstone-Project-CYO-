@@ -1,0 +1,327 @@
+---
+title: "Philipp CYO NBA"
+author: "Nico Philipp"
+date: "2/1/2024"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+```
+
+## NBA Playoffs Project
+
+__Introduction and Project Aim__
+
+The aim of this project is to predict weather or not an nba team made the playoffs or not over a 6 season span, based on publically available basketball statistics.
+
+Publicly available basketball statistics were collected using the nbastatR package for the NBA seasons 2017, 2018, 2019, 2021, 2022, and 2023. The data includes various performance metrics for each NBA team. The data was cleaned, selecting relevant variables such as assists per game, blocks per game, defensive rebounds per game, offensive rebounds per game, 2-point and 3-point field goal percentages, free-throw percentage, points scored per game, year of the season, and the name of the NBA team.
+
+Machine learning-based decision trees (classification) will be used to analyze and visualize the data. While a random forrest approach might provide us with more accurate or stable models, they are often harder to interpret for sport practitioners such as coaches and scouts. Therefore, given their interpretability, decision trees were chosen for this project. Furhter, a Receiver Operators Curve (ROC) statistic will be calculated and visualized highlighting the models ability to distinguish between non-playoff and playoff teams. To fulfill the two-model requirement for this assignment, we will also adopt a more straight forward logistic regression approach, supplemented with an ROC analysis.
+
+__Dependent/Response Variable:__ Playoffs (True vs. FALSE)
+
+__Independent/Predictor Variables:__
+
+- astPerGameTeam (Assists per game)
+- blkPerGameTeam (Blocks per game)
+- drbPerGameTeam (Defensive rebounds per game)
+- orbPerGameTeam (Offensive rebounds per game)
+- pctFG2PerGameTeam (2-point field goal percentage)
+- pctFG3PerGameTeam (3-point field goal percentage)
+- pctFTPerGameTeam (Free-throw percentage)
+- ptsPerGameTeam (Points scored per game)
+
+__Other variables:__
+
+- yearSeason (Year of season)
+- nameTeam (Name of nba team)
+
+
+```{r, message=FALSE}
+#load libraries
+library(tidyverse)
+library(nbastatR)
+library(tidymodels)
+library(rpart)
+library(rpart.plot)
+library(ROCR)
+library(caret)
+library(tinytex)
+library(pROC)
+
+Sys.setenv(VROOM_CONNECTION_SIZE = 500000)# Set the connection buffer size
+
+```
+
+
+```{r, message=FALSE}
+suppressMessages({
+#gather data from the nbastatr package
+  nbastatR::bref_teams_stats(seasons = 2017,
+                              return_message = FALSE,
+                              assign_to_environment = TRUE,
+                              nest_data = FALSE,
+                              join_data = TRUE,
+                              widen_data = TRUE)
+dat1 <- dataBREFPerGameTeams
+
+  nbastatR::bref_teams_stats(seasons = 2018,
+                              return_message = FALSE,
+                              assign_to_environment = TRUE,
+                              nest_data = FALSE,
+                              join_data = TRUE,
+                              widen_data = TRUE)
+dat2 <- dataBREFPerGameTeams
+
+  nbastatR::bref_teams_stats(seasons = 2019,
+                              return_message = FALSE,
+                              assign_to_environment = TRUE,
+                              nest_data = FALSE,
+                              join_data = TRUE,
+                              widen_data = TRUE)
+dat3 <- dataBREFPerGameTeams
+
+  nbastatR::bref_teams_stats(seasons = 2021,
+                              return_message = FALSE,
+                              assign_to_environment = TRUE,
+                              nest_data = FALSE,
+                              join_data = TRUE,
+                              widen_data = TRUE)
+dat4 <- dataBREFPerGameTeams
+
+  nbastatR::bref_teams_stats(seasons = 2022,
+                              return_message = FALSE,
+                              assign_to_environment = TRUE,
+                              nest_data = FALSE,
+                              join_data = TRUE,
+                              widen_data = TRUE)
+dat5 <- dataBREFPerGameTeams
+
+nbastatR::bref_teams_stats(seasons = 2023,
+                              return_message = FALSE,
+                              assign_to_environment = TRUE,
+                              nest_data = FALSE,
+                              join_data = TRUE,
+                              widen_data = TRUE)
+dat6 <- dataBREFPerGameTeams
+
+#combine into one dataframe
+combined_df <- rbind(dat1, dat2, dat3, dat4, dat5, dat6)
+})
+```
+
+
+```{r, message=FALSE}
+#select metrics of interest
+suppressMessages({
+combined_df_clean <- combined_df %>%
+  select(yearSeason, nameTeam, isPlayoffTeam, astPerGameTeam, blkPerGameTeam, drbPerGameTeam, orbPerGameTeam, pctFG2PerGameTeam, pctFG3PerGameTeam, pctFTPerGameTeam, ptsPerGameTeam)
+
+})
+```
+
+
+```{r}
+#playoff vs. non playoff counts
+playoffs_counts <- table(combined_df_clean$isPlayoffTeam)
+print(playoffs_counts)
+```
+
+__In our data, 80 teams missed the playoffs, while 100 teams made the playoffs over the span of 6 seasons.__
+
+---
+
+__Analysis 1: Decision Tree Model__
+```{r}
+#start decision tree model process
+
+#80 percent train, 20 percent test
+set.seed(123)
+
+trainIndex <- createDataPartition(combined_df_clean$isPlayoffTeam, p = 0.8, list = FALSE, times = 1)
+
+train_df <- combined_df_clean[trainIndex,]
+test_df <- combined_df_clean[-trainIndex,]
+
+#Defining our predictor (x) and response (y) variables
+x <- combined_df_clean %>% select(c(yearSeason, nameTeam, astPerGameTeam, blkPerGameTeam, drbPerGameTeam, orbPerGameTeam, pctFG2PerGameTeam, pctFG3PerGameTeam, pctFTPerGameTeam, ptsPerGameTeam))
+
+y <- combined_df_clean$isPlayoffTeam
+
+#Extracting Training Data (X_train, y_train) and Validation Data (X_val, y_val)
+
+X_train <- train_df %>% select(c(yearSeason, nameTeam, astPerGameTeam, blkPerGameTeam, drbPerGameTeam, orbPerGameTeam, pctFG2PerGameTeam, pctFG3PerGameTeam, pctFTPerGameTeam, ptsPerGameTeam))
+
+y_train <- train_df$isPlayoffTeam
+
+###
+
+X_val <- test_df %>% select(c(yearSeason, nameTeam, astPerGameTeam, blkPerGameTeam, drbPerGameTeam, orbPerGameTeam, pctFG2PerGameTeam, pctFG3PerGameTeam, pctFTPerGameTeam, ptsPerGameTeam))
+
+y_val <- test_df$isPlayoffTeam
+```
+
+
+__A 10-fold cross-validation with leave-one-out strategy is utilized to assess the model's accuracy and generalization performance__
+
+
+```{r}
+#define the parameters for model training.
+set.seed(123)
+
+fitControl <- trainControl(method = 'loocv',
+                           number = 10,
+                           savePredictions = 'final') #Save final prediction for each fold
+
+#
+view(train_df)
+
+#Training the decision tree model
+#set the max depth of the tree, and minimum instances for the tree to split
+set.seed(123)
+
+tree <- train(factor(isPlayoffTeam) ~.,
+              data = train_df %>% select(-c("nameTeam", "yearSeason")),
+              method = 'rpart',
+              metric = 'Accuracy',
+              trControl = fitControl,
+              control = rpart.control(minsplit = 1,
+                                      maxdepth = 4))
+
+tree
+```
+
+
+```{r}
+#This code segment is evaluating the performance of a decision tree model on different datasets (training, validation, and the entire dataset) and aims to assess if the model is overfitting or underfitting
+
+#train - test - split
+
+#determining if overfit(accuracy < train ) or underfit(accurary>train)
+
+#1) setting up model for the trained dataframe 
+tree_predict_train <- tree %>% predict(X_train, method = 'prop')
+#2) testing model on the validating dataframe - train/test split.
+tree_predict_val <- tree %>% predict(X_val, method = 'prop')
+#3) testing model on the whole dataframeix
+tree_predict <- tree %>% predict(x, method = 'prop')
+
+###
+
+#1) testing model on the trained dataframe - theoretically the best fit bc no new data. Over/underfit is with respect to this model's results
+confusionMatrix(factor(tree_predict_train), factor(y_train), positive = "TRUE")
+
+#2) testing model on the validating dataframe - train/test split. 
+confusionMatrix(factor(tree_predict_val), factor(y_val))
+
+#3) testing model on the whole dataframe - report the model's score metrics from this confusionmatrix. Provides an overall assessment of the model's performance
+confusionMatrix(factor(tree_predict), factor(y), positive = "TRUE")
+
+```
+
+
+__The decision tree model achieved an accuracy of approximately 80% in predicting playoff outcomes. The confusion matrices for the training, validation, and entire datasets provide a detailed breakdown of the model's performance.__
+
+
+```{r}
+#plot decision tree
+rattle::fancyRpartPlot(tree$finalModel, type = 4, caption = "Playoff Model")
+
+```
+
+
+__The decision tree plot (Figure 1) illustrates the features of importance for predicting playoff participation. Notably, teams with a 3-point field goal percentage of 35% or higher had a 72% chance of making the playoffs. Further, teams with a 3-point percentage of 35% or higher and a two-point percentage of 50% or higher had an 80% chance of making the playoffs.__
+
+
+```{r}
+#Receiver Operating Characteristic (ROC) curve analysis to evaluate the performance of a binary classification model.
+
+# Get predicted probabilities for the positive class (isPlayoffTeam = TRUE)
+set.seed(123)
+
+predictions <- predict(tree, newdata = X_val, type = "prob")[, "TRUE"]
+
+#create prediction object
+pred <- prediction(predictions, y_val)
+
+# Compute the AUC
+auc <- performance(pred, "auc")@y.values[[1]]
+
+# Print the AUC
+print(auc)
+
+#calculate performance measures
+perf <- performance(pred, "tpr", "fpr")
+
+#plot roc curve
+plot(perf, main = "ROC Curve", col = "blue")
+
+# Add diagonal reference line
+abline(a = 0, b = 1, col = "red", lty = 2)
+
+
+```
+
+
+__The Receiver Operating Characteristic (ROC) curve analysis provides insights into the model's ability to discriminate between playoff and non-playoff teams. The Area Under the Curve (AUC) is a key metric indicating the model's discriminatory power:__
+
+---
+
+__Model 2: Logistic Regression Model__
+
+__To fullfil the two model requirement, we want to see how a more simple, logistic regression model compares to the decision tree model. __
+
+```{r}
+# Logistic Regression Model
+set.seed(123)
+logistic_model <- glm(isPlayoffTeam ~ ., data = train_df, family = "binomial")
+
+# Predictions on Training Set
+logistic_predict_train <- predict(logistic_model, newdata = X_train, type = "response")
+
+# Predictions on Validation Set
+logistic_predict_val <- predict(logistic_model, newdata = X_val, type = "response")
+
+# Predictions on the Whole Dataset
+logistic_predict <- predict(logistic_model, newdata = x, type = "response")
+
+# Model Evaluation for Logistic Regression
+confusionMatrix(factor(logistic_predict_train > 0.5), factor(y_train), positive = "TRUE")
+confusionMatrix(factor(logistic_predict_val > 0.5), factor(y_val))
+confusionMatrix(factor(logistic_predict > 0.5), factor(y), positive = "TRUE")
+```
+
+__Plot the ROC results from the logistic regression model__
+
+```{r}
+# ROC Curve for Logistic Regression
+roc_curve <- roc(y_val, logistic_predict_val)
+auc <- auc(roc_curve)
+
+# Plotting ROC Curve
+plot(roc_curve, main = "ROC Curve for Logistic Regression", col = "blue")
+
+legend("bottomright", legend = paste("AUC =", round(auc, 2)), col = "blue", lty = 1, cex = 0.8)
+
+```
+
+
+__Summary Paragraph:__
+
+The decision tree model presented in this project showed that it was able to predict weather a team would make the playoffs with an accuracy of about 80%. More interestingly to practitioners may be the features of importance identified within the decision tree figure. More specifically, the figure shows that if a team shoots three pointers with a percentage of 35 or more percent, in 72% of cases they will reach the playoffs. If we go one step further, and teams that shoot 35 or more percent from three also shoots two point field goals with 50% or higher, the chances of reaching the playoffs goes up to 80%. This is in agreement with previous peer-reviewed literature, comparing winning to losing teams in the NBA (Cabarkapa et al. 2022). On the other hand, only shooting 35% or below from three leads to an 75% chance of not making the playoffs based on our model.
+
+Interestingly, our model has a higher sensitivity, compared to specificity, meaning it is better at ruling in playoff participation, rather than ruling out playoff participation. This seems positive, given that coaches tend to be more interested in key performance indicators predicting making the playoffs vs. missing the playoffs. The data presented in this project may be of acute interest to coaches and scouts, giving actionable insights into basketball statistics distinguishing between playoff and non-playoff teams at the nba level of play.
+
+Compared to the slightly more complex decision tree model, the logistic regression model yields a higher accuracy (86%). However, the accuracy on the validation data set is lower (69%), compared the validation data set in the decision tree model (78%), suggesting slight overfitting. Area under the curve (AUC) values are comparable between the two approaches. However, the decision tree model presents with a nice visual, giving actionable insights into the findings to respective stakeholders (e.g., coaches and scouts).
+
+__References__
+
+Cabarkapa D, Deane MA, Fry AC, Jones GT, Cabarkapa DV, Philipp NM, et al. Game statistics that discriminate winning and losing at the NBA level of basketball competition. PLoS One. 2022 Aug 19;17(8):e0273427.
+
+Ayasdi. (2018). nbastatR: Advanced NBA Statistics. R package version
+0.0.3. https://github.com/ayasdi/nbastatR
